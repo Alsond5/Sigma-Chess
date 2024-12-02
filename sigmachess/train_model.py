@@ -83,7 +83,7 @@ def train_model(model, replay_buffer: ReplayBuffer, batch_size=128, epochs=20, c
     callbacks = create_callbacks(checkpoint_path)
 
     for epoch in range(epochs):
-        replay_buffer.augment_data()
+        # replay_buffer.augment_data()
         states, policies, values = replay_buffer.sample(batch_size)
 
         states = np.squeeze(states)

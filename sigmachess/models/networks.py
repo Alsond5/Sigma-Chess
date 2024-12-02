@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras import backend as K
 from tensorflow.keras.initializers import HeNormal
 import numpy as np
 

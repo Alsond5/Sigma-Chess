@@ -2,61 +2,43 @@ import numpy as np
 from collections import deque
 
 class ReplayBuffer:
-    def __init__(self, maxlen=100000):
+    def __init__(self, maxlen=100000) -> None:
         self.buffer = deque(maxlen=maxlen)
-        self.state_shape = (8, 8, 119)  # Expected chess state shape
 
     def store(self, state, policy, value):
-        # Ensure state has correct shape
-        if state.shape != self.state_shape:
-            state = np.reshape(state, self.state_shape)
         self.buffer.append((state, policy, value))
 
     def sample(self, batch_size):
-        if len(self.buffer) < batch_size:
-            batch_size = len(self.buffer)
-            
+        buffer_array = np.array(self.buffer, dtype=object)  # Use dtype=object for variable shapes
         indices = np.random.choice(len(self.buffer), size=batch_size)
-        states, policies, values = [], [], []
-        
-        for idx in indices:
-            state, policy, value = self.buffer[idx]
-            # Ensure consistent shapes
-            state = np.reshape(state, self.state_shape)
-            states.append(state)
-            policies.append(policy)
-            values.append(value)
-            
-        return (np.array(states, dtype=np.float32), 
-                np.array(policies, dtype=np.float32), 
-                np.array(values, dtype=np.float32))
+        batch = buffer_array[indices]
+        states, policies, values = zip(*batch)  # Unzip into separate lists or arrays
+
+        return np.array(states), np.array(policies), np.array(values)
 
     def augment_data(self):
         augmented_buffer = []
-        
         for state, policy, value in self.buffer:
-            # Ensure state has correct shape
-            state = np.reshape(state, self.state_shape)
-            policy_3d = policy.reshape(8, 8, -1)
-            
-            # Generate all 8 orientations
-            for rot in range(4):
-                for flip in [False, True]:
-                    # Rotate
-                    new_state = np.rot90(state, k=rot, axes=(0, 1))
-                    new_policy = np.rot90(policy_3d, k=rot, axes=(0, 1))
-                    
-                    # Flip
-                    if flip:
-                        new_state = np.flip(new_state, axis=1)
-                        new_policy = np.flip(new_policy, axis=1)
-                    
-                    # Reshape policy back to 1D
-                    new_policy = new_policy.reshape(-1)
-                    
-                    # Ensure state shape consistency
-                    new_state = np.reshape(new_state, self.state_shape)
-                    
-                    augmented_buffer.append((new_state, new_policy, value))
-        
+            # Original sample
+            augmented_buffer.append((state, policy, value))
+
+            # 1D policy vektörünü 2D hale getirme
+            policy_2d = policy.reshape((4672, 1))  # (4672,) -> (4672, 1)
+
+            # Apply augmentation: Rotate 90 degrees (clockwise)
+            rotated_state = np.rot90(state)
+            rotated_policy = np.rot90(policy_2d)
+            augmented_buffer.append((rotated_state, rotated_policy, value))
+
+            # Apply augmentation: Flip horizontally
+            flipped_state = np.flip(state, axis=1)
+            flipped_policy = np.flip(policy, axis=1)
+            augmented_buffer.append((flipped_state, flipped_policy, value))
+
+            # Apply augmentation: Flip vertically
+            flipped_vertical_state = np.flip(state, axis=0)
+            flipped_vertical_policy = np.flip(policy, axis=0)
+            augmented_buffer.append((flipped_vertical_state, flipped_vertical_policy, value))
+
+        # Replace original buffer with augmented buffer
         self.buffer = deque(augmented_buffer, maxlen=self.buffer.maxlen)
