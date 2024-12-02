@@ -61,11 +61,18 @@ class MCTS:
         
         # First evaluate and expand root
         action_probs, value = self.evaluate(initial_state)
-        root.expand(action_probs)
-        
-        # Add Dirichlet noise to root node
         valid_moves = initial_state.get_valid_moves()
-        self.add_dirichlet_noise(root, valid_moves)
+        
+        # Add Dirichlet noise to root (alpha=0.3 for chess)
+        noise = np.random.dirichlet([0.3] * len(valid_moves))
+
+        # Expand with noisy priors
+        for idx, action in enumerate(valid_moves):
+            prob = action_probs[action]
+            noisy_prob = 0.75 * prob + 0.25 * noise[idx]
+            next_state = initial_state.clone()
+            next_state.get_next_state(action)
+            root.children[action] = Node(next_state, parent=root, prior_prob=noisy_prob)
 
         for _ in range(self.simulations):
             node = root
@@ -77,10 +84,11 @@ class MCTS:
             # Expansion and Evaluation
             if not node.state.is_terminal():
                 action_probs, value = self.evaluate(node.state)
+                valid_moves = node.state.get_valid_moves()
                 node.expand(action_probs)
             else:
                 value = node.state.get_winner()
-                value = 1 if value == 0 else -1
+                value = 1 if value == node.state.player_color else (0 if value == 2 else -1)
             
             # Backup
             node.backup(value)

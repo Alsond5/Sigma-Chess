@@ -13,6 +13,7 @@ class GameState:
     def __init__(self) -> None:
         self.board = chess.Board()
         self.repetition_count = 0
+        self.player_color: chess.Color = chess.WHITE
 
     def get_initial_state(self):
         self.board.reset()
