@@ -2,7 +2,7 @@
 
 import chess.engine
 from classes import GameState, MCTS, ReplayBuffer
-from models import sigmachess_network
+from models import sigmachess_network, create_model
 
 import numpy as np
 from tensorflow.keras.callbacks import ModelCheckpoint
@@ -10,6 +10,28 @@ import os
 
 # Harici Chess Engine Yolu
 engine = chess.engine.SimpleEngine.popen_uci(r"/home/alsond5/projects/sigmachess/stockfish/stockfish-ubuntu-x86-64-avx2")
+
+def augment_data(replay_buffer):
+    augmented_buffer = []
+    for sample in replay_buffer:
+        state = sample["state"]
+        policy = sample["policy"]
+        value = sample["value"]
+
+        # Örneğin 90 derece döndürme
+        rotated_state = np.rot90(state)
+        rotated_policy = np.rot90(policy)  # Politika dönüşümü
+
+        # Aynalama
+        flipped_state = np.flip(state, axis=1)
+        flipped_policy = np.flip(policy, axis=1)
+
+        # Orijinal ve artırılmış örnekleri ekle
+        augmented_buffer.append({"state": state, "policy": policy, "value": value})
+        augmented_buffer.append({"state": rotated_state, "policy": rotated_policy, "value": value})
+        augmented_buffer.append({"state": flipped_state, "policy": flipped_policy, "value": value})
+
+    return augmented_buffer
 
 def self_play(mcts, num_games=100):
     replay_buffer = ReplayBuffer()
@@ -21,7 +43,7 @@ def self_play(mcts, num_games=100):
 
         while not state.is_terminal():
             if state.board.turn == player:
-                action_probs = mcts.run(state)
+                action_probs = mcts.run(state, 1.0)
                 action = np.random.choice(len(action_probs), p=action_probs)
                 
                 s = state.get_current_state()
@@ -38,7 +60,7 @@ def self_play(mcts, num_games=100):
 
         rewards = [reward] * len(states)
 
-        print(reward)
+        print(rewards)
 
         for s, p, r in zip(states, policies, rewards):
             replay_buffer.store(s, p, r)
@@ -57,23 +79,25 @@ def create_callbacks(checkpoint_path="checkpoints/model_checkpoint.weights.h5"):
     )
     return [checkpoint]
 
-def train_model(model, replay_buffer, batch_size=128, epochs=20, checkpoint_path="checkpoints/model_checkpoint.weights.h5"):
+def train_model(model, replay_buffer: ReplayBuffer, batch_size=128, epochs=20, checkpoint_path="checkpoints/model_checkpoint.weights.h5"):
     callbacks = create_callbacks(checkpoint_path)
 
     for epoch in range(epochs):
+        replay_buffer.augment_data()
         states, policies, values = replay_buffer.sample(batch_size)
-        
-        # Boyutları doğrulamak için sıkıştırma ve yeniden şekillendirme
+
         states = np.squeeze(states)
         if len(states.shape) == 3:  # Eğer eksik boyut varsa
             states = np.expand_dims(states, -1)
+
+        values = np.array(values).reshape(-1, 1)
         
         model.fit(
-            { "input_layer": states },
+            states,
             { "policy_output": policies, "value_output": values },
             batch_size=batch_size,
             epochs=1,
-            callbacks=callbacks,
+            # callbacks=callbacks,
             verbose=1
         )
 
@@ -87,8 +111,5 @@ def train_sigmachess(model, num_iterations=100, num_games_per_iteration=100):
 
     model.save("sigmachess_model/full_model.keras")
 
-model = sigmachess_network()
-if os.path.exists("checkpoints/model_checkpoint.weights.h5"):
-    model.load_weights("checkpoints/model_checkpoint.weights.h5")
-
-train_sigmachess(model, num_iterations=10, num_games_per_iteration=20)
+model = create_model()
+train_sigmachess(model, num_iterations=10, num_games_per_iteration=1)
