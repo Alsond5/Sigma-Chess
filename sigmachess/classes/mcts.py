@@ -22,7 +22,9 @@ class Node:
                 next_state = self.state.clone()
                 next_state.get_next_state(action)
                 self.children[action] = Node(next_state, parent=self, prior_prob=prob)
-        self.is_expanded = True
+
+        if len(self.children.items()) > 0:
+            self.is_expanded = True
 
     def select(self, c_puct=1.0):
         max_ucb = -float('inf')
@@ -30,14 +32,30 @@ class Node:
         best_child = None
         
         for action, child in self.children.items():
-            ucb = child.value + c_puct * child.prior_prob * (math.sqrt(self.visits) / (1 + child.visits))
+            ucb = self.calculate_ucb(child, c_puct)
+            
             if ucb > max_ucb:
                 max_ucb = ucb
                 best_action = action
                 best_child = child
+
+        if best_child is None:
+            print(self.visits, ucb, child.value)
+            for action, child in self.children.items():
+                print(action, child.visits, child.value_sum, child.prior_prob)
+                
         return best_action, best_child
 
+    def calculate_ucb(self,child, c_puct):
+        ucb = c_puct * child.prior_prob * (math.sqrt(self.visits) / (1 + child.visits))
+        value = -child.value if child.visits > 0 else 0
+
+        return ucb + value
+
     def backup(self, value):
+        if value == float("nan"):
+            print("Burası çok önemli:", value)
+            
         self.visits += 1
         self.value_sum += value
         if self.parent:
@@ -49,13 +67,6 @@ class MCTS:
         self.c_puct = c_puct
         self.simulations = simulations
 
-    def add_dirichlet_noise(self, node, valid_moves):
-        noise = np.random.dirichlet([0.3] * len(valid_moves))
-        for idx, action in enumerate(valid_moves):
-            if action in node.children:
-                node.children[action].prior_prob = \
-                    0.75 * node.children[action].prior_prob + 0.25 * noise[idx]
-
     def run(self, initial_state, temperature=1.0):
         root = Node(initial_state)
         
@@ -65,14 +76,9 @@ class MCTS:
         
         # Add Dirichlet noise to root (alpha=0.3 for chess)
         noise = np.random.dirichlet([0.3] * len(valid_moves))
+        action_probs[valid_moves] = action_probs[valid_moves] * 0.75 + noise[[x for x in range(len(valid_moves))]] * 0.25
 
-        # Expand with noisy priors
-        for idx, action in enumerate(valid_moves):
-            prob = action_probs[action]
-            noisy_prob = 0.75 * prob + 0.25 * noise[idx]
-            next_state = initial_state.clone()
-            next_state.get_next_state(action)
-            root.children[action] = Node(next_state, parent=root, prior_prob=noisy_prob)
+        root.expand(action_probs)
 
         for _ in range(self.simulations):
             node = root
@@ -84,11 +90,10 @@ class MCTS:
             # Expansion and Evaluation
             if not node.state.is_terminal():
                 action_probs, value = self.evaluate(node.state)
-                valid_moves = node.state.get_valid_moves()
                 node.expand(action_probs)
             else:
-                value = node.state.get_winner()
-                value = 1 if value == node.state.player_color else (0 if value == 2 else -1)
+                winner = node.state.get_winner()
+                value = 1 if winner == node.state.player_color else (0 if winner == 2 else -1)
             
             # Backup
             node.backup(value)
@@ -100,13 +105,14 @@ class MCTS:
         # state_tensor = np.expand_dims(state_tensor, axis=0)
         
         policy, value = self.model.predict(state_tensor, verbose=0)
+        policy = policy[0]
         
         # Mask invalid moves
         valid_moves = state.get_valid_moves()
-        mask = np.zeros(policy.shape[1])
+        mask = np.zeros(policy.shape)
         mask[valid_moves] = 1
         
-        policy = policy[0] * mask
+        policy *= mask
         
         # Normalize
         sum_policy = np.sum(policy)

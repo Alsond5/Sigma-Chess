@@ -5,6 +5,7 @@ class ReplayBuffer:
     def __init__(self, maxlen=500000):
         self.buffer = deque(maxlen=maxlen)
         self.current_size = 0
+        self.lock = threading.Lock()
 
     def store(self, state, policy, value):
         """Store a single game state transition"""
@@ -14,6 +15,11 @@ class ReplayBuffer:
             'value': value
         })
         self.current_size = len(self.buffer)
+
+    def store_multiple_data(self, states, policies, value):
+        with self.lock:
+            for s, p, v in zip(states, policies, [value]):
+                self.store(s, p, v)
 
     def sample(self, batch_size):
         """Sample a batch with augmentations"""

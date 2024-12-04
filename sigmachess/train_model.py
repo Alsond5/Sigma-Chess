@@ -8,43 +8,50 @@ import numpy as np
 from tensorflow.keras.callbacks import ModelCheckpoint
 import os
 
-# Harici Chess Engine Yolu
-engine = chess.engine.SimpleEngine.popen_uci(r"/home/alsond5/projects/sigmachess/stockfish/stockfish-ubuntu-x86-64-avx2")
+# train_model.py
 
-def self_play(mcts, num_games=100):
-    replay_buffer = ReplayBuffer(maxlen=500000)
+def play_vs_stockfish(model, game, replay_buffer):
+    temperature = 1.0 if game < 5 else 0.1
+
+    w_states, w_policies, w_rewards = [], [], []
+    player = np.random.choice([chess.WHITE, chess.BLACK])
+
+    state = GameState(player)
+
+    engine = chess.engine.SimpleEngine.popen_uci(r"/kaggle/working/stockfish-ubuntu-x86-64-avx2")
+
+    while not state.is_terminal():
+        if state.board.turn == player:
+            mcts = MCTS(model, 1.0, 10)
+            action_probs = mcts.run(state, temperature)
+            
+            w_states.append(state.get_current_state())
+            w_policies.append(action_probs)
     
-    for game in range(num_games):
-        state = GameState()
-        temperature = 1.0 if game < 30 else 0.1
+            action = np.random.choice(len(action_probs), p=action_probs)
+            state.get_next_state(action)
+        else:
+            result = engine.play(state.board, chess.engine.Limit(0.04))
+            state.apply_action(result.move)
 
-        states, policies, rewards = [], [], []
-        player = np.random.choice([chess.WHITE, chess.BLACK])
+    engine.close()
 
-        while not state.is_terminal():
-            if state.board.turn == player:
-                action_probs = mcts.run(state, temperature)
-                
-                states.append(state.get_current_state())
-                policies.append(action_probs)
+    winner = state.get_winner()
+    w_value = 1 if winner == player else (0 if winner == 2 else -1)
 
-                action = np.random.choice(len(action_probs), p=action_probs)
-                state.get_next_state(action)
-            else:
-                result = engine.play(state.board, chess.engine.Limit(0.5))
-                state.apply_action(result.move)
+    print(player, state.board.board_fen())
 
-        winner = state.get_winner()
-        value = 1 if winner == player else (0 if winner == 2 else -1)
+    replay_buffer.store_multiple_data(w_states, w_policies, w_value)
 
-        print(player, state.board.board_fen())
+def self_play(model, num_games=100, max_workers=5):
+    replay_buffer = ReplayBuffer(maxlen=500000)
 
-        for s, p, v in zip(states, policies, [value]):
-            replay_buffer.store(s, p, v)
+    for i in range(num_games):
+        play_vs_stockfish(model, i, replay_buffer)
 
     return replay_buffer
 
-def create_callbacks(checkpoint_path="checkpoints/model_checkpoint.weights.h5"):
+def create_callbacks(checkpoint_path="/kaggle/working/sigma_checkpoint.weights.h5"):
     checkpoint = ModelCheckpoint(
         filepath=checkpoint_path,
         save_weights_only=True,
@@ -54,9 +61,10 @@ def create_callbacks(checkpoint_path="checkpoints/model_checkpoint.weights.h5"):
         save_freq="epoch",
         verbose=1
     )
+    
     return [checkpoint]
 
-def train_model(model, replay_buffer: ReplayBuffer, batch_size=256, epochs=3, checkpoint_path="checkpoints/model_checkpoint.weights.h5"):
+def train_model(model, replay_buffer: ReplayBuffer, batch_size=64, epochs=1, checkpoint_path="/kaggle/working/sigma_checkpoint.weights.h5"):
     callbacks = create_callbacks(checkpoint_path)
 
     for epoch in range(epochs):
@@ -74,19 +82,44 @@ def train_model(model, replay_buffer: ReplayBuffer, batch_size=256, epochs=3, ch
             { "policy_output": policies, "value_output": values },
             batch_size=batch_size,
             epochs=1,
-            # callbacks=callbacks,
+            callbacks=callbacks,
             verbose=1
         )
 
+is_stop = False
+
 def train_sigmachess(model, num_iterations=100, num_games_per_iteration=100):
+    global is_stop
+    
     for iteration in range(num_iterations):
         print(f"Iteration {iteration + 1}/{num_iterations}")
         
-        mcts = MCTS(model, 1.0, 80)
-        replay_buffer = self_play(mcts, num_games_per_iteration)
+        replay_buffer = self_play(model, num_games_per_iteration)
         train_model(model, replay_buffer)
 
-    model.save("sigmachess_model/full_model.keras")
+        print()
+
+        if is_stop:
+            break
+
+    model.save("/kaggle/working/sigma_model.keras")
+
+# with tpu_strategy.scope():
+    # model = create_model()
+
+def stop():
+    global is_stop
+    
+    while True:
+        inp = input("")
+        if inp == "stop":
+            is_stop = True
+            print("After the iteration is completed, the training will be stopped and the model will be saved!")
+            
+            break
+
+t = threading.Thread(target=stop, daemon=True)
+t.start()
 
 model = create_model()
-train_sigmachess(model, num_iterations=7000, num_games_per_iteration=15)
+train_sigmachess(model, num_iterations=700, num_games_per_iteration=10)

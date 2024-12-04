@@ -10,10 +10,10 @@ class GameState:
         chess.BISHOP: 2
     }
     
-    def __init__(self) -> None:
+    def __init__(self, player_color: chess.Color) -> None:
         self.board = chess.Board()
         self.repetition_count = 0
-        self.player_color: chess.Color = chess.WHITE
+        self.player_color: chess.Color = player_color
 
     def get_initial_state(self):
         self.board.reset()
@@ -21,7 +21,7 @@ class GameState:
         return self.get_current_state()
         
     def get_current_state(self, T=8):
-        input_tensor = np.zeros((8, 8, 119), dtype=np.uint8)
+        input_tensor = np.zeros((8, 8, 119), dtype=np.float32)
 
         for t in range(T):
             _t = T - t - 1
@@ -33,7 +33,7 @@ class GameState:
         color = 0 if self.board.turn == chess.WHITE else 1
         input_tensor[:, :, 112] = color
 
-        input_tensor[:, :, 113] = len(self.board.move_stack) > 0
+        input_tensor[:, :, 113] = self.board.fullmove_number / 500
 
         p1_castling = (1 * self.board.has_kingside_castling_rights(chess.WHITE)) | (2 * self.board.has_queenside_castling_rights(chess.WHITE))
         p1_castling_bit = format(p1_castling, "02b")
@@ -45,7 +45,7 @@ class GameState:
         input_tensor[:, :, 116] = int(p2_castling_bit[0])
         input_tensor[:, :, 117] = int(p2_castling_bit[1])
 
-        input_tensor[:, :, 118] = int(self.board.is_fifty_moves())
+        input_tensor[:, :, 118] = self.board.halfmove_clock / 50
 
         return np.expand_dims(input_tensor, axis=0)
 
@@ -80,22 +80,31 @@ class GameState:
             destination_index = source_index + 6 if direction == 6 else destination_index
             destination_index = source_index + 15 if direction == 7 else destination_index
         else:
-            direction = move_type // 3
-            promotion_index = move_type % 3
+            direction = (move_type - 64) // 3
+            promotion_index = (move_type - 64) % 3
 
             promotion = chess.KNIGHT if promotion_index == 0 else (chess.ROOK if promotion_index == 1 else chess.BISHOP)
 
+            color_value = 1 if self.board.turn == chess.WHITE else -1
+
             if direction == 0:
-                destination_index = source_index + (8 * (self.board.turn != chess.WHITE) * -1)
+                destination_index = source_index + (8 * color_value)
             elif direction == 1:
-                destination_index = source_index + (9 * (self.board.turn != chess.WHITE) * -1)
+                destination_index = source_index + (9 * color_value)
             else:
-                destination_index = source_index + (7 * (self.board.turn != chess.WHITE) * -1)
+                destination_index = source_index + (7 * color_value)
 
         from_square = chess.Square(source_index)
         to_square = chess.Square(destination_index)
 
+        promotion_rank = 7 if self.board.turn == chess.WHITE else 0
+
+        if promotion is None:
+            if self.board.piece_type_at(from_square) == chess.PAWN and chess.square_rank(to_square) == promotion_rank:
+                promotion = chess.QUEEN
+        
         move = chess.Move(from_square, to_square, promotion)
+
         self.apply_action(move)
 
         return move, self.get_current_state()
@@ -176,10 +185,10 @@ class GameState:
                 else:
                     promotion_index = self.promotion_indexes[valid_move.promotion]
 
-                    if direction > 2:
+                    if direction > 2 and direction < 6:
                         direction = 0 if direction == 4 else (1 if direction == 5 else 2)
-                    else:
-                        direction = 2 if direction == 7 else direction
+                    elif direction == 7:
+                        direction = 2
 
                     index = (from_square_index * 73) + ((direction * 3) + promotion_index + 64)
                     legal_moves.append(index)
@@ -256,7 +265,7 @@ class GameState:
         return self.board.is_game_over()
     
     def clone(self):
-        cloned_state = GameState()
+        cloned_state = GameState(self.player_color)
         cloned_state.board = self.board.copy()
 
         return cloned_state
